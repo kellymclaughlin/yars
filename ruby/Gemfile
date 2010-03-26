@@ -1,0 +1,9 @@
+
+source :gemcutter
+
+gem "rake"
+gem "rack"
+gem "erlectricity"
+gem "thin"
+
+# vim: ft=ruby

@@ -1,0 +1,10 @@
+{release, {"YEReF", "yeref-0.0.1"}, {erts, "5.6.5"},
+  [{kernel, "2.13.4"},
+   {stdlib, "1.16.4"},
+   {sasl, "2.1.8"},
+   {inets, "5.2"},
+   {crypto, "1.6.3"},
+   {ktuo, "0.4.0.3"},
+   {emongo, "0.0.1"},
+   {yeref, "0.0.1"}
+  ]}.
