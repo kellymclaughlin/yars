@@ -144,12 +144,12 @@ module Bundler
   FINGERPRINT  = "e6e22f11fccf9ee927857d701e02865153d4daec"
   AUTOREQUIRES = {:default=>[["rake", false], ["erlectricity", false], ["rack", false], ["thin", false]]}
   SPECS        = [
-        {:loaded_from=>"/opt/ruby/lib/ruby/gems/1.8/specifications/rake-0.8.7.gemspec", :load_paths=>["/opt/ruby/lib/ruby/gems/1.8/gems/rake-0.8.7/lib"], :name=>"rake"},
-        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/daemons-1.0.10.gemspec", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/daemons-1.0.10/lib"], :name=>"daemons"},
-        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/erlectricity-1.1.1.gemspec", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/erlectricity-1.1.1/lib", "/home/klm/git/yeref/ruby/vendor/gems/gems/erlectricity-1.1.1/ext"], :name=>"erlectricity"},
-        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/eventmachine-0.12.10.gemspec", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/eventmachine-0.12.10/lib"], :name=>"eventmachine"},
-        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/rack-1.1.0.gemspec", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/rack-1.1.0/lib"], :name=>"rack"},
-        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/thin-1.2.7.gemspec", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/thin-1.2.7/lib"], :name=>"thin"},
+        {:loaded_from=>"/opt/ruby/lib/ruby/gems/1.8/specifications/rake-0.8.7.gemspec", :name=>"rake", :load_paths=>["/opt/ruby/lib/ruby/gems/1.8/gems/rake-0.8.7/lib"]},
+        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/daemons-1.0.10.gemspec", :name=>"daemons", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/daemons-1.0.10/lib"]},
+        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/erlectricity-1.1.1.gemspec", :name=>"erlectricity", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/erlectricity-1.1.1/lib", "/home/klm/git/yeref/ruby/vendor/gems/gems/erlectricity-1.1.1/ext"]},
+        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/eventmachine-0.12.10.gemspec", :name=>"eventmachine", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/eventmachine-0.12.10/lib"]},
+        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/rack-1.1.0.gemspec", :name=>"rack", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/rack-1.1.0/lib"]},
+        {:loaded_from=>"/home/klm/git/yeref/ruby/vendor/gems/specifications/thin-1.2.7.gemspec", :name=>"thin", :load_paths=>["/home/klm/git/yeref/ruby/vendor/gems/gems/thin-1.2.7/lib"]},
       ].map do |hash|
     if hash[:loaded_from]
       dir = File.dirname(hash[:loaded_from])
