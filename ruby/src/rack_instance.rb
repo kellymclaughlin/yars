@@ -1,26 +1,43 @@
 require 'optparse'
+require 'rack'
+require 'thin'
 
-options = {}
+#TODO: Work out what to do about installing gems for target rack project.
+
+@options = {}
+
+def load_adapter
+  adapter = @options[:adapter] || Rack::Adapter.guess(@options[:rails_root])
+  puts ">> Using #{adapter} adapter"
+  puts @options[:rails_root]
+  Rack::Adapter.for(adapter, {:chdir => @options[:rails_root]})
+rescue Rack::AdapterNotFound => e
+  raise InvalidOption, e.message
+end
+
+
 opts = OptionParser.new do |opts|
   opts.on("-r", "--rails-root RAILS_ROOT", String) do |x|
-    options[:rails_root] = x
+    @options[:rails_root] = x
   end
   opts.on("-t", "--test", "enable test mode") do
-    options[:test] = true
+    @options[:test] = true
   end
   opts.on("-e", "--rails-env ENV", String) do |x|
-    options[:rails_env] = x
+    @options[:rails_env] = x
   end
 end
 opts.parse(ARGV)
-options[:rails_root] = File.join(File.dirname(__FILE__), *%w[.. test app]) if options[:test]
-options[:rails_env] ||= 'development'
+@options[:rails_root] = File.join(File.dirname(__FILE__), *%w[.. test app]) if @options[:test]
+puts "Rails root " + @options[:rails_root] if @options[:rails_root]
+@options[:rails_env] ||= 'development'
 
 # Load adapter for Rack application. 
 #app = Rack::Adapter::Rails.new(:root => options[:rails_root], :environment => options[:rails_env])
 app = load_adapter
-logfile = options[:rails_root] + "/log/yeref.#{Process.pid}.log"
+logfile = @options[:rails_root] + "/log/yeref.#{Process.pid}.log"
 $handler = Yeref::ErlangCoupling.new(app, logfile)
+
 
 # chassis
 class RequestDispatcher
@@ -33,9 +50,9 @@ class RequestDispatcher
     h.start
   end
 
-  def handle(:handle_request, :request) do |args|
-    $handler.service(args[:request])
-  end
+  #def handle(:handle_request, :request) do |args|
+    #$handler.service(args[:request])
+  #end
 
   # Start the Erlectricity recieve/respond loop
   #
@@ -67,18 +84,9 @@ class RequestDispatcher
     end
   end
 
-  private
-    def load_adapter
-      adapter = @options[:adapter] || Rack::Adapter.guess(@options[:chdir])
-      log ">> Using #{adapter} adapter"
-      Rack::Adapter.for(adapter, @options)
-    rescue Rack::AdapterNotFound => e
-      raise InvalidOption, e.message
-    end
-  end
 end
 
 at_exit do
-  Chassis.start
+  RequestDispatcher.start
 end
 
