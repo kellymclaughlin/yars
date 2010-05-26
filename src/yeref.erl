@@ -17,18 +17,27 @@ start(SConf) ->
             SConf#sconf.docroot
     end,
 
-    %%TODO: Start rack application instances 
+    %%Start rack application instances 
+    spawn(fun() ->
+      register(rack_instance, self()),
+      process_flag(trap_exit, true),
+      %Cmd = lists:flatten(io_lib:format("ruby ../ruby/src/rack_instance.rb ~s ~s ~s ~s", [Domain, Email, Password, Room])),
+      Cmd = lists:flatten(io_lib:format("ruby ../ruby/src/rack_instance.rb -r ~s", [AppRoot])),
+      Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
+      port_loop(Port, 10000, "cmd")
+    end),
+
     ok.
 
 wrap(Command) ->
- spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), loop(Port, infinity, Command) end).
+ spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), port_loop(Port, infinity, Command) end).
 wrap(Command, Timeout) -> 
-  spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), loop(Port, Timeout, Command) end).
+  spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), port_loop(Port, Timeout, Command) end).
 
 create_port(Command) ->
   open_port({spawn, Command}, [{packet, 4}, nouse_stdio, exit_status, binary]).
 
-loop(Port, Timeout, Command) ->
+port_loop(Port, Timeout, Command) ->
   receive
     noose -> 
       port_close(Port),
@@ -38,7 +47,7 @@ loop(Port, Timeout, Command) ->
       exit(shutdown);
     {Source, host} -> 
       Source ! {Port, node()},
-      loop(Port,Timeout,Command);
+      port_loop(Port,Timeout,Command);
     {Source, heat} -> 
       Port ! {self(), {command, term_to_binary(ping)}},
       Hot = term_to_binary(pong),
@@ -46,7 +55,7 @@ loop(Port, Timeout, Command) ->
         {Port, {data, Hot}} -> 
           Source ! {self(), hot}
       end,
-      loop(Port, Timeout, Command);
+      port_loop(Port, Timeout, Command);
     {Source, api} -> 
       Port ! {self(), {command, term_to_binary(api)}},
       receive
@@ -54,7 +63,7 @@ loop(Port, Timeout, Command) ->
           {result, Api} = binary_to_term(Result),
           Source ! {self(), tuple_to_list(Api)}
       end,
-      loop(Port,Timeout,Command);
+      port_loop(Port,Timeout,Command);
     {Source, {command, Message}} -> 
       Port ! {self(), {command, Message}},
       receive
@@ -74,10 +83,10 @@ loop(Port, Timeout, Command) ->
         port_close(Port), % Should SIGPIPE the child.
         exit(timed_out)
       end,
-      loop(Port,Timeout,Command);
+      port_loop(Port,Timeout,Command);
     {_Source, {just_send_a_command, Message}} -> 
       Port ! {self(), {command, Message}},
-      loop(Port,Timeout,Command);
+      port_loop(Port,Timeout,Command);
     {Port, {exit_status, _Code}} ->
       % Hard and Unanticipated Crash
       error_logger:error_msg( "Port closed! ~p~n", [Port] ),
@@ -87,7 +96,7 @@ loop(Port, Timeout, Command) ->
       exit(shutdown);
     Any -> 
       error_logger:warning_msg("PortWrapper ~p got unexpected message: ~p~n", [self(), Any]),
-      loop(Port, Timeout, Command)
+      port_loop(Port, Timeout, Command)
   end.
     
 

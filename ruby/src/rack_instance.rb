@@ -1,6 +1,8 @@
 require 'optparse'
 require 'rack'
 require 'thin'
+require File.dirname(__FILE__) + '/erlang_coupling.rb'
+
 
 #TODO: Work out what to do about installing gems for target rack project.
 
@@ -46,8 +48,8 @@ class RequestDispatcher
   end
 
   def self.start
-    h = $handler.new
-    h.start
+    #h = $handler.new
+    #h.start
   end
 
   #def handle(:handle_request, :request) do |args|

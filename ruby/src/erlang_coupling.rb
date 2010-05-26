@@ -15,7 +15,7 @@ module Yeref
   class ErlangCoupling
       def initialize(app, logfile)
         @app = app
-        $logger = Logger.new(logfile) if LOG
+        #$logger = Logger.new(logfile) if LOG
       end
       
       def service(request)
@@ -127,6 +127,7 @@ module Yeref
         log(res.inspect) if LOG
   
         res
+    end
   end
 end
 
