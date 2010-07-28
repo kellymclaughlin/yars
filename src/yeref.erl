@@ -21,8 +21,7 @@ start(SConf) ->
     spawn(fun() ->
       register(rack_instance, self()),
       process_flag(trap_exit, true),
-      %Cmd = lists:flatten(io_lib:format("ruby ../ruby/src/rack_instance.rb ~s ~s ~s ~s", [Domain, Email, Password, Room])),
-      Cmd = lists:flatten(io_lib:format("ruby ../ruby/src/rack_instance.rb -r ~s", [AppRoot])),
+      Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s\"", [AppRoot])),
       Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
       port_loop(Port, 10000, "cmd")
     end),
@@ -40,15 +39,19 @@ create_port(Command) ->
 port_loop(Port, Timeout, Command) ->
   receive
     noose -> 
+      io:format("noose~n"),
       port_close(Port),
       noose;
     shutdown ->
+      io:format("shutdown~n"),
       port_close(Port),
       exit(shutdown);
     {Source, host} -> 
+      io:format("host~n"),
       Source ! {Port, node()},
       port_loop(Port,Timeout,Command);
     {Source, heat} -> 
+      io:format("heat~n"),
       Port ! {self(), {command, term_to_binary(ping)}},
       Hot = term_to_binary(pong),
       receive
@@ -57,6 +60,7 @@ port_loop(Port, Timeout, Command) ->
       end,
       port_loop(Port, Timeout, Command);
     {Source, api} -> 
+      io:format("api~n"),
       Port ! {self(), {command, term_to_binary(api)}},
       receive
         {Port, {data, Result}} ->   
@@ -65,6 +69,7 @@ port_loop(Port, Timeout, Command) ->
       end,
       port_loop(Port,Timeout,Command);
     {Source, {command, Message}} -> 
+      io:format("command~n"),
       Port ! {self(), {command, Message}},
       receive
         {Port, {data, Result}} ->
@@ -78,6 +83,7 @@ port_loop(Port, Timeout, Command) ->
               Source ! {self(), Z}
           end
       after Timeout ->
+        io:format("Timeout~n"),
         error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Message]),
         % We timed out, which means we need to close and then restart the port
         port_close(Port), % Should SIGPIPE the child.
@@ -85,13 +91,16 @@ port_loop(Port, Timeout, Command) ->
       end,
       port_loop(Port,Timeout,Command);
     {_Source, {just_send_a_command, Message}} -> 
+      io:format("just~n"),
       Port ! {self(), {command, Message}},
       port_loop(Port,Timeout,Command);
-    {Port, {exit_status, _Code}} ->
+    {Port, {exit_status, Code}} ->
+      io:format("exit status ~p~n",[Code]),
       % Hard and Unanticipated Crash
       error_logger:error_msg( "Port closed! ~p~n", [Port] ),
-      exit({error, _Code});
+      exit({error, Code});
     {'EXIT',_Pid,shutdown} ->
+      io:format("EXIT~n"),
       port_close(Port),
       exit(shutdown);
     Any -> 
