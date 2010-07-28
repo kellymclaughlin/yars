@@ -59,7 +59,7 @@ class RequestDispatcher
   # Start the Erlectricity recieve/respond loop
   #
   # Never returns
-  def start
+  def self.start
     receive(IO.new(3), IO.new(4)) do |f|
       f.when([:call, Array]) do |args|
         method = args[0]
