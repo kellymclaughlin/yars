@@ -70,13 +70,21 @@ class RequestDispatcher
         f.receive_loop
       end
       
+      f.when([:request, Array]) do |args|
+        method = args[0]
+        path = args[1]
+        puts "Method #{method}"
+        puts "Path #{path}"
+        f.receive_loop
+      end
+
       f.when(:config) do
         f.send! [:result, self.config]
         f.receive_loop
       end
       
       f.when(:ping) do
-        f.send! :pong
+        f.send!(:pong)
         f.receive_loop
       end
       

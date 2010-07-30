@@ -3,7 +3,19 @@
 %-export([]).
 -compile([export_all]).
 
--include("yaws.hrl").
+-include_lib("yaws/include/yaws.hrl").
+-include_lib("yaws/include/yaws_api.hrl").
+
+
+out(Arg, SC, GC) ->
+    out404(Arg, SC, GC).
+    
+out404(Arg, SC, GC) ->
+    io:format("out404~n"),
+    io:format("Request: ~p~n",[Arg#arg.req]),
+    %%TODO: Process request
+    rack_instance ! {self(), {request, Arg#arg.req}},
+    ok.
 
 start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
@@ -38,6 +50,10 @@ create_port(Command) ->
 
 port_loop(Port, Timeout, Command) ->
   receive
+    {Source, {request, {http_request, Method, {abs_path, Path}, _Version}}} -> 
+      Req = [Method, list_to_binary(Path)],
+      port_command(Port, term_to_binary({request, Req})),
+      port_loop(Port, Timeout, Command);
     noose -> 
       io:format("noose~n"),
       port_close(Port),
@@ -52,12 +68,16 @@ port_loop(Port, Timeout, Command) ->
       port_loop(Port,Timeout,Command);
     {Source, heat} -> 
       io:format("heat~n"),
-      Port ! {self(), {command, term_to_binary(ping)}},
+      port_command(Port, term_to_binary(ping)),
       Hot = term_to_binary(pong),
       receive
         {Port, {data, Hot}} -> 
-          Source ! {self(), hot}
+            io:format("Hot!~n");   
+            %Source ! {self(), hot};
+        Other ->
+            io:format("Other: ~p~n", [Other])    
       end,
+      io:format("calling port_loop again~n"),
       port_loop(Port, Timeout, Command);
     {Source, api} -> 
       io:format("api~n"),
@@ -89,10 +109,6 @@ port_loop(Port, Timeout, Command) ->
         port_close(Port), % Should SIGPIPE the child.
         exit(timed_out)
       end,
-      port_loop(Port,Timeout,Command);
-    {_Source, {just_send_a_command, Message}} -> 
-      io:format("just~n"),
-      Port ! {self(), {command, Message}},
       port_loop(Port,Timeout,Command);
     {Port, {exit_status, Code}} ->
       io:format("exit status ~p~n",[Code]),
