@@ -62,21 +62,40 @@ class RequestDispatcher
   def self.start
     receive(IO.new(3), IO.new(4)) do |f|
       f.when([:call, Array]) do |args|
+		puts args.inspect
         method = args[0]
-        retype = args[1]
-        args = args[2..-1]
-        f.send! self.dispatch(method, retype, args)
-        exit if exit_after_current_dispatch
+		#method = args['method']
+		#path = args['path']
+        #retype = args[1]
+        #args = args[2..-1]
+		puts "Method #{method}"
+		#puts "Path #{path}"
+        #f.send! self.dispatch(method, retype, args)
+        #exit if exit_after_current_dispatch
+        f.receive_loop
+      end
+
+      f.when([:request, Array]) do |args|
+        method = args[0]
+		puts args.inspect
+		#method = args['method']
+		#path = args['path']
+        #retype = args[1]
+        #args = args[2..-1]
+		puts "Method #{method}"
+		#puts "Path #{path}"
+        #f.send! self.dispatch(method, retype, args)
+        #exit if exit_after_current_dispatch
         f.receive_loop
       end
       
-      f.when([:request, Array]) do |args|
-        method = args[0]
-        path = args[1]
-        puts "Method #{method}"
-        puts "Path #{path}"
-        f.receive_loop
-      end
+      #f.when([:request, Array]) do |args|
+        #method = args[0]
+        #path = args[1]
+        #puts "Method #{method}"
+        #puts "Path #{path}"
+        #f.receive_loop
+      #end
 
       f.when(:config) do
         f.send! [:result, self.config]

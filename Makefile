@@ -16,7 +16,7 @@ GEN 	:= beam
 
 EFLAGS := -pa ebin +debug_info
 
-INCLUDE := -Iinclude -I$(EUNIT) -I$(YAWS)/include -I$(XMERL) -I$(STDLIB)
+INCLUDE := -I./include -I$(EUNIT) -I$(YAWS)/include -I$(XMERL) -I$(STDLIB)
 EBIN 	:= ebin
 SRC     := $(wildcard src/*.erl)
 HEADERS := $(wildcard $(INCLUDE)/*.hrl)	

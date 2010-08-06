@@ -99,7 +99,7 @@ module Yeref
             html << part
           end
     
-          headers['Server'] = 'YAWS + Fuzed 0.0.1'
+          headers['Server'] = 'YAWS + YeReF 0.0.1'
           headers['Connection'] = 'close'
     
           cookies = headers.delete('cookie')
