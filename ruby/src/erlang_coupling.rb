@@ -7,6 +7,9 @@ require 'stringio'
 require 'logger'
 require 'rack'
 
+$total_avg = [0, 0]
+$rails_avg = [0, 0]
+
 def log(msg)
   $logger << msg + "\n"
 end
@@ -18,10 +21,10 @@ module Yeref
         #$logger = Logger.new(logfile) if LOG
       end
       
-      def service(request)
-        log('------------RAW IN------------') if LOG
-        log(request.inspect) if LOG
-        
+      def service(req)
+        #log('------------RAW IN------------') if LOG
+        #log(request.inspect) if LOG
+        request = req['request'] 
         method = request['method']
         version = request['http_version'] # => e.g. [1, 1]
         remote_addr = request['remote_addr']
@@ -81,8 +84,8 @@ module Yeref
           env["HTTP_COOKIE"] = cookie.to_s
         end
   
-        log('------------IN------------') if LOG
-        log(env.inspect) if LOG
+        #log('------------IN------------') if LOG
+        #log(env.inspect) if LOG
   
         begin
           t1 = Time.now
@@ -92,7 +95,7 @@ module Yeref
           rails_delta = Time.now - t1
           $rails_avg[0] += rails_delta
           $rails_avg[1] += 1
-          log(">> Rails in #{rails_delta} (#{$rails_avg[0] / $rails_avg[1]} avg) sec") if LOG
+          #log(">> Rails in #{rails_delta} (#{$rails_avg[0] / $rails_avg[1]} avg) sec") if LOG
   
           html = ''
           body.each do |part|
@@ -123,8 +126,8 @@ module Yeref
              [:html, "500 Internal Error\n\n#{e}\n\n#{e.backtrace}"]]]
         end
     
-        log('-----------OUT------------') if LOG
-        log(res.inspect) if LOG
+        #log('-----------OUT------------') if LOG
+        #log(res.inspect) if LOG
   
         res
     end

@@ -52,10 +52,27 @@ create_port(Command) ->
 
 port_loop(Port, Timeout, Command) ->
   receive
-    {Source, {request, Arg}} -> 
-	  {http_request, Method, {abs_path, Path}, Version} = Arg#arg.req, 
-      Req = [{method, Method}, {path, list_to_binary(Path)}],
+    {Source, {request, Req}} -> 
+	  %{http_request, Method, {abs_path, Path}, Version} = Arg#arg.req, 
+      %Req = [{method, Method}, {path, list_to_binary(Path)}],
       port_command(Port, term_to_binary({request, Req})),
+      receive
+        {Port, {data, Result}} ->
+          DB = binary_to_term(Result),
+          case DB of
+            {last_result, X} ->
+              Source ! {self(), {result, X}},
+              port_close(Port),
+              exit(last_result);
+            Z -> 
+              Source ! {self(), Z}
+          end
+      after Timeout ->
+        error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Req]),
+        % We timed out, which means we need to close and then restart the port
+        port_close(Port), % Should SIGPIPE the child.
+        exit(timed_out)
+      end,
       port_loop(Port, Timeout, Command);
     shutdown ->
       io:format("shutdown~n"),
@@ -102,7 +119,6 @@ port_loop(Port, Timeout, Command) ->
               Source ! {self(), Z}
           end
       after Timeout ->
-        io:format("Timeout~n"),
         error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Message]),
         % We timed out, which means we need to close and then restart the port
         port_close(Port), % Should SIGPIPE the child.
@@ -135,6 +151,8 @@ yaws_process_request(RackInstance, Arg, _GC, SC) ->
 
 yaws_process_arg(Arg, SC) ->
   Headers = Arg#arg.headers,
+  io:format("Headers: ~p~n", [Headers]),
+  io:format("Prepared Headers: ~p~n", [yaws_prepare_headers(Headers)]),
   [{method, yaws_prepare(method, Arg)},
    {http_version, yaws_prepare(http_version, Arg)},
    {https, determine_ssl(SC)},
@@ -210,14 +228,16 @@ determine_ssl(SC) ->
   end.
   
 execute_request(RackInstance, Parameters) ->
-  %% TODO: Look at fuzed node_api.erl send_call/4
-  case  RackInstance ! {self(), {command, term_to_binary(Parameters)}} of
-    {result, Result} -> result_processor(Result);
-    {error, Result} ->
+  Request = [http_request , pure | prepare_parameters(Parameters)],
+  io:format("REQUEST: ~p~n", [Request]),
+  RackInstance ! {self(), {request, Request}},
+  receive
+    {_Source, {result, Result}} -> result_processor(Result);
+    {_Source, {error, Result}} ->
       error_logger:info_msg("500 Internal Server Error: ~p~n", [Result]),
       {500, [], "Internal Server Error due to failed response."};
     Other ->
-      error_logger:info_msg("501 Other Server Error: ~n"),
+      error_logger:info_msg("501 Other Server Error: ~p~n", [Other]),
       {501, [], "Other Server Error due to failed response."}
   end.
 
@@ -236,3 +256,13 @@ details() ->
 
 prep(A) when is_list(A) -> list_to_binary(A);
 prep(A) -> A.
+
+prepare_parameters(L) when is_list(L) ->
+  [{K,prepare_pvalue(V)} || {K,V} <- L].
+
+atom_to_binary(Atom) when is_atom(Atom) -> list_to_binary(atom_to_list(Atom)).
+prepare_pvalue({struct, L}) when is_list(L) -> {struct, [prepare_pvalue(X) || X <- L]};
+prepare_pvalue({array, L}) when is_list(L) -> {array, [prepare_pvalue(X) || X <- L]};
+prepare_pvalue({Atom, V}) when is_atom(Atom) -> {atom_to_binary(Atom), prepare_pvalue(V)};
+prepare_pvalue(L) when is_list(L) ->  list_to_binary(xmerl_ucs:to_utf8(L));
+prepare_pvalue(V) -> V.
