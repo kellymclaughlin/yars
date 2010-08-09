@@ -12,7 +12,7 @@ def load_adapter
   adapter = @options[:adapter] || Rack::Adapter.guess(@options[:rails_root])
   puts ">> Using #{adapter} adapter"
   puts @options[:rails_root]
-  Rack::Adapter.for(adapter, {:chdir => @options[:rails_root]})
+  Rack::Adapter.for(adapter, {:chdir => @options[:rails_root], :environment => @options[:rails_env]})
 rescue Rack::AdapterNotFound => e
   raise InvalidOption, e.message
 end
@@ -31,8 +31,9 @@ opts = OptionParser.new do |opts|
 end
 opts.parse(ARGV)
 @options[:rails_root] = File.join(File.dirname(__FILE__), *%w[.. test app]) if @options[:test]
-puts "Rails root " + @options[:rails_root] if @options[:rails_root]
+puts "Rails root " + @options[:rails_root] if @options[:rails_root] + "\n"
 @options[:rails_env] ||= 'development'
+puts "Rails env " + @options[:rails_env] + "\n"
 
 # Load adapter for Rack application. 
 #app = Rack::Adapter::Rails.new(:root => options[:rails_root], :environment => options[:rails_env])
@@ -80,14 +81,13 @@ class RequestDispatcher
     # Dispatch a method by its name
   #   +method+ is the Symbol representing the method name
   #   +retype+ is the response type Symbol (:json | :pure)
-  #   +args+ is the Erlang-stle args for the call
+  #   +args+ is the Erlang-style args for the call
   #
   # Returns one of:
   #   [:result, <jsonified result>]
   #   [:error, <error string>]
   def dispatch(method, retype, args)
     #result = self.send("handle_#{method}".to_sym, args)
-	puts "DISPATCH"
     result = $handler.service(convert_args(args))
     result_key = RequestDispatcher.exit_after_current_dispatch ? :last_result : :result
     case retype

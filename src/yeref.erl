@@ -35,7 +35,8 @@ start(SConf) ->
     spawn(fun() ->
       register(rack_instance, self()),
       process_flag(trap_exit, true),
-      Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s\"", [AppRoot])),
+	  RailsEnv = "production",
+      Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
       Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
       port_loop(Port, 10000, "cmd")
     end),
