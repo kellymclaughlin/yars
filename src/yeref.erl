@@ -12,16 +12,15 @@ out(Arg, GC, SC) ->
     out404(Arg, GC, SC).
     
 out404(Arg, GC, SC) ->
-    io:format("out404~n"),
-    io:format("Request: ~p~n",[Arg#arg.req]),
-    %%TODO: Process request
-	yaws_process_request(rack_instance, Arg, GC, SC).
-    %rack_instance ! {self(), {request, Arg}},
-    %ok.
+    %% Process request
+	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2:get_closest_pid(normal_pool), Arg, GC, SC]),
+	io:format("Processed request in ~w seconds~n", [RequestTime/1000000]),
+	Result.
 
 start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
     SlowRequestPoolSize = list_to_integer(proplists:get_value("slow_request_pool_size", SConf#sconf.opaque, 10)),
+	RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
 
     %%Get the rack application location
     AppRoot = case lists:reverse(SConf#sconf.docroot) of
@@ -31,25 +30,36 @@ start(SConf) ->
             SConf#sconf.docroot
     end,
 
-    %%Start rack application instances 
-    spawn(fun() ->
-      register(rack_instance, self()),
+	%% Create a process group for the normal request pool
+	pg2:create(normal_pool),
+	%% Create a process group for the normal request pool
+	%% TODO: Uncomment when slow request handling logic is completed
+	%pg2:create(slow_pool),
+
+    %%Start rack application instances for the normal request pool 
+    Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
+	[spawn_ruby_instance(AppRoot, RailsEnv, Cmd, normal_pool) || _ <- lists:seq(1, RequestPoolSize)],
+    %%Start rack application instances for the slow request pool 
+	%% TODO: Uncomment when slow request handling logic is completed
+    %Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
+	%[spawn_ruby_instance(AppRoot, RailsEnv, Cmd, slow_pool) || _ <- lists:seq(1, SlowRequestPoolSize)],
+    ok.
+
+spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
+    Pid = spawn(fun() ->
       process_flag(trap_exit, true),
-	  RailsEnv = "production",
-      Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
       Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
       port_loop(Port, 10000, "cmd")
     end),
 
-    ok.
+	%% Join the rack instance to the process group
+	case pg2:join(RequestPool, Pid) of
+		{error, Error} ->
+			io:format("Error occurred trying to join process group: ~p~n", [Error]);
+		_ ->
+			ok
+	end.
 
-wrap(Command) ->
- spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), port_loop(Port, infinity, Command) end).
-wrap(Command, Timeout) -> 
-  spawn(fun() -> process_flag(trap_exit, true), Port = create_port(Command), port_loop(Port, Timeout, Command) end).
-
-create_port(Command) ->
-  open_port({spawn, Command}, [{packet, 4}, nouse_stdio, exit_status, binary]).
 
 port_loop(Port, Timeout, Command) ->
   receive
@@ -139,11 +149,14 @@ port_loop(Port, Timeout, Command) ->
       error_logger:warning_msg("PortWrapper ~p got unexpected message: ~p~n", [self(), Any]),
       port_loop(Port, Timeout, Command)
   end.
-    
 
-yaws_process_request(none, _Arg, _GC, _SC) ->
-  [{status, 503}, {html, "There is no pool to field your request."}];
+yaws_process_request({no_process, _}, _Arg, _GC, _SC) ->
+	%% Process has gone away so try to another one
+	yaws_process_request(pg2:get_closest_pid(normal_pool), _Arg, _GC, _SC);
+yaws_process_request({no_such_group, _}, _Arg, _GC, _SC) ->
+  [{status, 503}, {html, "There are no rack instances available to process your request."}];
 yaws_process_request(RackInstance, Arg, _GC, SC) ->
+  io:format("Using ~p to process request~n", [RackInstance]),
   Parameters = [{request, {struct, yaws_process_arg(Arg, SC)}}],
   case execute_request(RackInstance, Parameters) of
     {Status, [], Message} -> [{status, Status}, {html, Message}];
@@ -152,8 +165,6 @@ yaws_process_request(RackInstance, Arg, _GC, SC) ->
 
 yaws_process_arg(Arg, SC) ->
   Headers = Arg#arg.headers,
-  io:format("Headers: ~p~n", [Headers]),
-  io:format("Prepared Headers: ~p~n", [yaws_prepare_headers(Headers)]),
   [{method, yaws_prepare(method, Arg)},
    {http_version, yaws_prepare(http_version, Arg)},
    {https, determine_ssl(SC)},
@@ -219,8 +230,6 @@ yaws_prepare_headers(Headers) ->
     lists:map(fun({http_header, _Len, Name, _, Value}) -> {prep(Name), prep(Value)} end, 
               Headers#headers.other),
   [{Name, Res} || {Name, Res} <- NormalHeaders, Res /= undefined] ++ SpecialHeaders.
-%% END Yaws Specific Stuff
-
 
 determine_ssl(SC) ->
   case SC#sconf.ssl of
@@ -230,7 +239,6 @@ determine_ssl(SC) ->
   
 execute_request(RackInstance, Parameters) ->
   Request = [http_request , pure | prepare_parameters(Parameters)],
-  io:format("REQUEST: ~p~n", [Request]),
   RackInstance ! {self(), {request, Request}},
   receive
     {_Source, {result, Result}} -> result_processor(Result);
@@ -261,9 +269,8 @@ prep(A) -> A.
 prepare_parameters(L) when is_list(L) ->
   [{K,prepare_pvalue(V)} || {K,V} <- L].
 
-atom_to_binary(Atom) when is_atom(Atom) -> list_to_binary(atom_to_list(Atom)).
 prepare_pvalue({struct, L}) when is_list(L) -> {struct, [prepare_pvalue(X) || X <- L]};
 prepare_pvalue({array, L}) when is_list(L) -> {array, [prepare_pvalue(X) || X <- L]};
-prepare_pvalue({Atom, V}) when is_atom(Atom) -> {atom_to_binary(Atom), prepare_pvalue(V)};
+prepare_pvalue({Atom, V}) when is_atom(Atom) -> {atom_to_binary(Atom, utf8), prepare_pvalue(V)};
 prepare_pvalue(L) when is_list(L) ->  list_to_binary(xmerl_ucs:to_utf8(L));
 prepare_pvalue(V) -> V.

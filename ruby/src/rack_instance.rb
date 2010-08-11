@@ -122,8 +122,6 @@ class RequestDispatcher
         method = args[0]
 		return_type = args[1]
         args = args[2..-1]
-		puts "Method #{method}"
-		puts args.inspect
         f.send! dispatch(method, return_type, args)
         exit if RequestDispatcher.exit_after_current_dispatch
         f.receive_loop
