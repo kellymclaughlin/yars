@@ -7,10 +7,8 @@
 -include_lib("yaws/include/yaws_api.hrl").
 -include_lib("kernel/include/file.hrl").
 
+out(Arg, GC, SC) -> out404(Arg, GC, SC).  
 
-out(Arg, GC, SC) ->
-    out404(Arg, GC, SC).
-    
 out404(Arg, GC, SC) ->
     %% Process request
 	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2:get_closest_pid(normal_pool), Arg, GC, SC]),
@@ -19,7 +17,7 @@ out404(Arg, GC, SC) ->
 
 start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
-    SlowRequestPoolSize = list_to_integer(proplists:get_value("slow_request_pool_size", SConf#sconf.opaque, 10)),
+    BackupRequestPoolSize = list_to_integer(proplists:get_value("backup_request_pool_size", SConf#sconf.opaque, 10)),
 	RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
 
     %%Get the rack application location
@@ -32,34 +30,58 @@ start(SConf) ->
 
 	%% Create a process group for the normal request pool
 	pg2:create(normal_pool),
-	%% Create a process group for the normal request pool
-	%% TODO: Uncomment when slow request handling logic is completed
-	%pg2:create(slow_pool),
+	%% Create a process group for the backup request pool
+	pg2:create(backup_pyool),
 
     %%Start rack application instances for the normal request pool 
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn_ruby_instance(AppRoot, RailsEnv, Cmd, normal_pool) || _ <- lists:seq(1, RequestPoolSize)],
-    %%Start rack application instances for the slow request pool 
-	%% TODO: Uncomment when slow request handling logic is completed
-    %Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	%[spawn_ruby_instance(AppRoot, RailsEnv, Cmd, slow_pool) || _ <- lists:seq(1, SlowRequestPoolSize)],
+	[spawn(?MODULE, instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, RequestPoolSize)],
+    %%Start rack application instances for the backup request pool 
+	Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
+	[spawn(?MODULE, instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, BackupRequestPoolSize)],
     ok.
 
-spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
-    Pid = spawn(fun() ->
-      process_flag(trap_exit, true),
-      Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
-      port_loop(Port, 10000, "cmd")
-    end),
-
-	%% Join the rack instance to the process group
-	case pg2:join(RequestPool, Pid) of
+init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool) ->
+	%% Spawn a process to run the rack instance
+	RackPid = spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool),
+	%% Join the rack instance manager to the process group
+	case pg2:join(RequestPool, self()) of
 		{error, Error} ->
 			io:format("Error occurred trying to join process group: ~p~n", [Error]);
 		_ ->
 			ok
-	end.
+	end,
 
+	%% Begin instance manager loop
+	instance_manager_loop(RackPid, {free, []}).
+	
+spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
+    spawn(fun() ->
+      process_flag(trap_exit, true),
+      Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
+      port_loop(Port, 10000, "cmd")
+    end).
+
+
+%% TODO: Handle reply from rack instance.
+%% TODO: Handle moving backed up requests off  list
+%% TODO: Handle using rack instance from backup pool 
+%%		 if request waits for too long.
+instance_manager_loop(RackPid, {free, []}) ->
+	receive
+		{Source, {request, Req}} -> 
+			RackPid ! {self(), {request, Req}}
+	end;
+instance_manager_loop(RackPid, {busy, []}) ->
+	receive
+		{Source, {request, Req}} -> 
+			instance_manager_loop(RackPid, [{busy, {Source, {request, Req}}}])
+	end;
+instance_manager_loop(rackpid, {free, requestlist}) ->
+	receive
+		{source, {request, req}} -> 
+			instance_manager_loop(rackpid, [{busy, {source, {request, req}}}| requestlist])
+	end.
 
 port_loop(Port, Timeout, Command) ->
   receive
@@ -237,9 +259,9 @@ determine_ssl(SC) ->
     _Else -> 1
   end.
   
-execute_request(RackInstance, Parameters) ->
+execute_request(InstanceManager, Parameters) ->
   Request = [http_request , pure | prepare_parameters(Parameters)],
-  RackInstance ! {self(), {request, Request}},
+  InstanceManager ! {self(), {request, Request}},
   receive
     {_Source, {result, Result}} -> result_processor(Result);
     {_Source, {error, Result}} ->
