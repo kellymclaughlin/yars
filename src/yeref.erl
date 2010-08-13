@@ -35,10 +35,9 @@ start(SConf) ->
 
     %%Start rack application instances for the normal request pool 
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, RequestPoolSize)],
+	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, RequestPoolSize)],
     %%Start rack application instances for the backup request pool 
-	Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, BackupRequestPoolSize)],
+	%[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, BackupRequestPoolSize)],
     ok.
 
 init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool) ->
@@ -69,23 +68,33 @@ spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
 %%		 if request waits for too long.
 instance_manager_loop(RackPid, {free, []}) ->
 	receive
-		{Source, {request, Req}} -> 
-			RackPid ! {self(), {request, Req}}
+		{Requester, {request, Req}} -> 
+			RackPid ! {self(), Requester, {request, Req}},
+			instance_manager_loop(RackPid, {free, []});
+		{RackPid, Requester, Result} -> 
+			Requester ! {self(), Result},
+			instance_manager_loop(RackPid, {free, []})
 	end;
 instance_manager_loop(RackPid, {busy, []}) ->
 	receive
 		{Source, {request, Req}} -> 
-			instance_manager_loop(RackPid, [{busy, {Source, {request, Req}}}])
+			instance_manager_loop(RackPid, [{busy, {Source, {request, Req}}}]);
+		{RackPid, Requester, Result} -> 
+			Requester ! {self(), Result},
+			instance_manager_loop(RackPid, {busy, []})
 	end;
-instance_manager_loop(rackpid, {free, requestlist}) ->
+instance_manager_loop(RackPid, {free, RequestList}) ->
 	receive
 		{source, {request, req}} -> 
-			instance_manager_loop(rackpid, [{busy, {source, {request, req}}}| requestlist])
+			instance_manager_loop(rackpid, [{busy, {source, {request, req}}}| requestlist]);
+		{RackPid, Requester, Result} -> 
+			Requester ! {self(), Result},
+			instance_manager_loop(RackPid, {free, RequestList})
 	end.
 
 port_loop(Port, Timeout, Command) ->
   receive
-    {Source, {request, Req}} -> 
+    {Source, Requester, {request, Req}} -> 
 	  %{http_request, Method, {abs_path, Path}, Version} = Arg#arg.req, 
       %Req = [{method, Method}, {path, list_to_binary(Path)}],
       port_command(Port, term_to_binary({request, Req})),
@@ -94,11 +103,11 @@ port_loop(Port, Timeout, Command) ->
           DB = binary_to_term(Result),
           case DB of
             {last_result, X} ->
-              Source ! {self(), {result, X}},
+              Source ! {self(), Requester, {result, X}},
               port_close(Port),
               exit(last_result);
             Z -> 
-              Source ! {self(), Z}
+              Source ! {self(), Requester, Z}
           end
       after Timeout ->
         error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Req]),
@@ -263,8 +272,8 @@ execute_request(InstanceManager, Parameters) ->
   Request = [http_request , pure | prepare_parameters(Parameters)],
   InstanceManager ! {self(), {request, Request}},
   receive
-    {_Source, {result, Result}} -> result_processor(Result);
-    {_Source, {error, Result}} ->
+    {InstanceManager, {result, Result}} -> result_processor(Result);
+    {InstanceManager, {error, Result}} ->
       error_logger:info_msg("500 Internal Server Error: ~p~n", [Result]),
       {500, [], "Internal Server Error due to failed response."};
     Other ->
