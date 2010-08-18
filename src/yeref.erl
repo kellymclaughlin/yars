@@ -18,7 +18,9 @@ out404(Arg, GC, SC) ->
 start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
     BackupRequestPoolSize = list_to_integer(proplists:get_value("backup_request_pool_size", SConf#sconf.opaque, 10)),
-	RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
+    RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
+    WaitThreshold = list_to_integer(proplists:get_value("request_wait_threshold", SConf#sconf.opaque, "2000")),
+    io:format("Wait time: ~w~n", [WaitThreshold]),
 
     %%Get the rack application location
     AppRoot = case lists:reverse(SConf#sconf.docroot) of
@@ -31,16 +33,16 @@ start(SConf) ->
 	%% Create a process group for the normal request pool
 	pg2:create(normal_pool),
 	%% Create a process group for the backup request pool
-	pg2:create(backup_pyool),
+	pg2:create(backup_pool),
 
     %%Start rack application instances for the normal request pool 
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, RequestPoolSize)],
+	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool, WaitThreshold]) || _ <- lists:seq(1, RequestPoolSize)],
     %%Start rack application instances for the backup request pool 
-	%[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool]) || _ <- lists:seq(1, BackupRequestPoolSize)],
+	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, backup_pool, WaitThreshold]) || _ <- lists:seq(1, BackupRequestPoolSize)],
     ok.
 
-init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool) ->
+init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool, WaitThreshold) ->
 	%% Spawn a process to run the rack instance
 	RackPid = spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool),
 	%% Join the rack instance manager to the process group
@@ -52,7 +54,7 @@ init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool) ->
 	end,
 
 	%% Begin instance manager loop
-	instance_manager_loop(RackPid, {free, []}).
+	instance_manager_loop(RackPid, {idle, []}, WaitThreshold).
 	
 spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
     spawn(fun() ->
@@ -62,35 +64,98 @@ spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
     end).
 
 
-%% TODO: Handle reply from rack instance.
-%% TODO: Handle moving backed up requests off  list
-%% TODO: Handle using rack instance from backup pool 
-%%		 if request waits for too long.
-instance_manager_loop(RackPid, {free, []}) ->
+%% Instance manager may be in one of three states: idle, busy, or clogged.
+%%   idle - the instance manager is not managing any requests
+%%   busy - the instance manager is waiting on a request to complete
+%%   clogged - the current request being processed by the instance manager
+%%             has taken longer than a pre-configured wait threshold. This
+%%             value is set in the yaws configuration file.
+%% TODO: Use gen_fsm to model instance_manager behavior
+instance_manager_loop(RackPid, {idle, []}, WaitThreshold) ->
+	receive
+        {Requester, {request, Req}} -> 
+			RackPid ! {self(), Requester, {request, Req}},
+            {ok, TimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}]}, WaitThreshold);
+        _ ->
+			instance_manager_loop(RackPid, {idle, []}, WaitThreshold)
+            
+	end;
+instance_manager_loop(RackPid, {busy, []}, WaitThreshold) ->
+    instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
+instance_manager_loop(RackPid, {busy, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold) ->
 	receive
 		{Requester, {request, Req}} -> 
-			RackPid ! {self(), Requester, {request, Req}},
-			instance_manager_loop(RackPid, {free, []});
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, {Requester, {request, Req}} | QueuedRequests]}, WaitThreshold);
 		{RackPid, Requester, Result} -> 
+            %% Received response from current request.
+            %% Cancel the timer for the request
+            timer:cancel(TimerRef),
+
+            %% Notify the requesting process
 			Requester ! {self(), Result},
-			instance_manager_loop(RackPid, {free, []})
+
+            %% Begin processing the next request if there
+            %% are any queued. Reverse the list of queued
+            %% requests because new requests are added to
+            %% the front of the list.
+            case lists:reverse(QueuedRequests) of
+                [] ->
+			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
+                [{NextRequester, {request, NextRequest}} | OtherRequests] ->
+                    RackPid ! {self(), NextRequester, {request, NextRequest}},
+                    {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
+			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold)
+            end;
+        threshold_elapsed ->
+			instance_manager_loop(RackPid, {clogged, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold)
 	end;
-instance_manager_loop(RackPid, {busy, []}) ->
+instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
 	receive
-		{Source, {request, Req}} -> 
-			instance_manager_loop(RackPid, [{busy, {Source, {request, Req}}}]);
+		{Requester, {request, Req}} -> 
+			instance_manager_loop(RackPid, {busy, [{Requester, {request, Req}} | QueuedRequests]}, WaitThreshold);
 		{RackPid, Requester, Result} -> 
-			Requester ! {self(), Result},
-			instance_manager_loop(RackPid, {busy, []})
+            %% Begin processing the next request if there
+            %% are any queued. Reverse the list of queued
+            %% requests because new requests are added to
+            %% the front of the list.
+            case lists:reverse(QueuedRequests) of
+                [] ->
+			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
+                [{NextRequester, {request, NextRequest}} | OtherRequests] ->
+                    RackPid ! {self(), NextRequester, {request, NextRequest}},
+                    {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
+			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold)
+            end;
+        threshold_elapsed ->
+			instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold)
 	end;
-instance_manager_loop(RackPid, {free, RequestList}) ->
-	receive
-		{source, {request, req}} -> 
-			instance_manager_loop(rackpid, [{busy, {source, {request, req}}}| requestlist]);
+instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
+    receive
+		{Requester, {request, Req}} -> 
+            pg2:get_closest_pid(backup_pool) ! {Requester, {request, Req}},
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
 		{RackPid, Requester, Result} -> 
+            %% Received response from current request.
+            %% Notify the requesting process
 			Requester ! {self(), Result},
-			instance_manager_loop(RackPid, {free, RequestList})
-	end.
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold)
+    end;
+instance_manager_loop(RackPid, {clogged, [TimerRef | QueuedRequests]}, WaitThreshold) ->
+    %% Send all requests queued in RequestList to be handled
+    %% by the backup request pool of ruby instances.
+    [pg2:get_closest_pid(backup_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
+
+    receive
+		{Requester, {request, Req}} -> 
+            pg2:get_closest_pid(backup_pool) ! {Requester, {request, Req}},
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
+		{RackPid, Requester, Result} -> 
+            %% Received response from current request.
+            %% Notify the requesting process
+			Requester ! {self(), Result},
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold)
+    end.
 
 port_loop(Port, Timeout, Command) ->
   receive
@@ -272,8 +337,8 @@ execute_request(InstanceManager, Parameters) ->
   Request = [http_request , pure | prepare_parameters(Parameters)],
   InstanceManager ! {self(), {request, Request}},
   receive
-    {InstanceManager, {result, Result}} -> result_processor(Result);
-    {InstanceManager, {error, Result}} ->
+    {_, {result, Result}} -> result_processor(Result);
+    {_, {error, Result}} ->
       error_logger:info_msg("500 Internal Server Error: ~p~n", [Result]),
       {500, [], "Internal Server Error due to failed response."};
     Other ->
