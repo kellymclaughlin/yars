@@ -12,7 +12,7 @@ Description
 -----------
 
 Yeref provides a means to use the high performance Erlang webserver 
-Yaws (yaws.hyber.org) to serve rack applications. The main goals of 
+[Yaws](http://yaws.hyber.org) to serve rack applications. The main goals of 
 this project are performance and simplicity. Yeref strives to be simple 
 to install, configure, and use so developers can spend more time
 writing applications. 
