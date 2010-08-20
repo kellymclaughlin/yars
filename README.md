@@ -12,7 +12,7 @@ Description
 -----------
 
 Yeref provides a means to use the high performance Erlang webserver 
-[Yaws](http://yaws.hyber.org) to serve rack applications in the same 
+[Yaws] [] to serve rack applications in the same 
 vein as Phusion Passenger. The main goals of this project are 
 performance and simplicity. Yeref strives to be simple 
 to install, configure, and use so developers can spend more time
@@ -21,11 +21,11 @@ writing applications.
 Dependencies
 -------
     
-* "Erlang/OTP":http://www.erlang.org
-* "Yaws":http://yaws.hyber.org
-* "RVM":http://rvm.beginrescueend.com/
+* [Erlang/OTP] []
+* [Yaws] []
+* [RVM] []
 * Ruby 1.8.7 - rvm install 1.8.7
-* "Bundler":http://gembundler.com
+* [Bundler] []
 
 Install
 -------
@@ -68,3 +68,8 @@ Copyright
 ---------
 
 Copyright (c) 2010 Kelly McLaughlin. See LICENSE for details.
+
+[Erlang/OTP]: http://www.erlang.org "Erlang/OTP"
+[Yaws]: http://yaws.hyber.org   "Yaws"
+[RVM]: http://rvm.beginrescueend.com/   "RVM"
+[Bundler]: http://gembundler.com    "Bundler"
