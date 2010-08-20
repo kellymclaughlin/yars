@@ -21,11 +21,11 @@ writing applications.
 Dependencies
 -------
     
-* [Erlang/OTP]: http://www.erlang.org
-* [Yaws]: http://yaws.hyber.org
-* [RVM]: http://rvm.beginrescueend.com/
+* "Erlang/OTP":http://www.erlang.org
+* "Yaws":http://yaws.hyber.org
+* "RVM":http://rvm.beginrescueend.com/
 * Ruby 1.8.7 - rvm install 1.8.7
-* [Bundler]: http://gembundler.com
+* "Bundler":http://gembundler.com
 
 Install
 -------
