@@ -58,22 +58,11 @@ I'll only cover a few here.
 - Create a server block for each application you 
   want to server. Replace localhost with the 
   domain name for the application.
-- docroot - Change docroot to point to the public directory of
+- *docroot* - Change docroot to point to the public directory of
   your project.
-- request_pool_size - This is the number of ruby workers that 
-                      yeref will start and use to fulfill requests.
-- backup_request_pool_size - This is the number of ruby workers that 
-                      yeref will start and use to continue to serve
-                      requests promptly when there are slow requests
-                      pending on the ruby workers from the normal pool.
-                      It is recommended that this number be at least half
-                      of the size of the request_pool_size parameter, but
-                      the best value will be dependent on the characteristics
-                      of your application and traffic flow.
-- request_wait_threshold - The amount of time in milliseconds that pending requests
-                           for a particular ruby instance will wait for it
-                           to finish its current processing task before 
-                           being distributed to the backup request pool. 
+- *request_pool_size* - This is the number of ruby workers that yeref will start and use to fulfill requests.
+- *backup_request_pool_size* - This is the number of ruby workers that yeref will start and use to continue to serve requests promptly when there are slow requests pending on the ruby workers from the normal pool.  It is recommended that this number be at least half of the size of the request_pool_size parameter, but the best value will be dependent on the characteristics of your application and traffic flow.
+- *request_wait_threshold* - The amount of time in milliseconds that pending requests for a particular ruby instance will wait for it to finish its current processing task before being distributed to the backup request pool. 
                            
 Copyright
 ---------
