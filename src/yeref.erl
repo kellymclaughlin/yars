@@ -36,7 +36,7 @@ start(SConf) ->
 	pg2:create(backup_pool),
 
     %%Start rack application instances for the normal request pool 
-    Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./ruby/src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
+    Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
 	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool, WaitThreshold]) || _ <- lists:seq(1, RequestPoolSize)],
     %%Start rack application instances for the backup request pool 
 	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, backup_pool, WaitThreshold]) || _ <- lists:seq(1, BackupRequestPoolSize)],
