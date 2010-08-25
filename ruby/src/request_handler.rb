@@ -15,7 +15,7 @@ def log(msg)
 end
 
 module Yeref
-  class ErlangCoupling
+  class RequestHandler 
       def initialize(app, logfile)
         @app = app
         #$logger = Logger.new(logfile) if LOG
@@ -102,7 +102,7 @@ module Yeref
             html << part
           end
     
-          headers['Server'] = 'YAWS + YeReF 0.0.1'
+          headers['Server'] = 'YAWS + yeref 0.0.1'
           headers['Connection'] = 'close'
     
           cookies = headers.delete('cookie')
