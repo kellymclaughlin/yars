@@ -37,14 +37,31 @@ start(SConf) ->
 
     %%Start rack application instances for the normal request pool 
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, normal_pool, WaitThreshold]) || _ <- lists:seq(1, RequestPoolSize)],
+	[spawn(?MODULE, init_instance_manager, [Cmd, normal_pool, WaitThreshold]) || _ <- lists:seq(1, RequestPoolSize)],
     %%Start rack application instances for the backup request pool 
-	[spawn(?MODULE, init_instance_manager, [AppRoot, RailsEnv, Cmd, backup_pool, WaitThreshold]) || _ <- lists:seq(1, BackupRequestPoolSize)],
+	[spawn(?MODULE, init_instance_manager, [Cmd, backup_pool, WaitThreshold]) || _ <- lists:seq(1, BackupRequestPoolSize)],
     ok.
 
-init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool, WaitThreshold) ->
+add_instance_managers(Count, RequestPool) ->
+    {ok, _, SConf} = yaws_api:getconf(),
+    RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
+    WaitThreshold = list_to_integer(proplists:get_value("request_wait_threshold", SConf#sconf.opaque, "2000")),
+
+    %%Get the rack application location
+    AppRoot = case lists:reverse(SConf#sconf.docroot) of
+        "cilbup/" ++ Rest ->
+            lists:reverse(Rest);
+        _ ->
+            SConf#sconf.docroot
+    end,
+    
+    Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
+	[spawn(?MODULE, init_instance_manager, [Cmd, RequestPool, WaitThreshold]) || _ <- lists:seq(1, Count)].
+
+init_instance_manager(Cmd, RequestPool, WaitThreshold) ->
 	%% Spawn a process to run the rack instance
-	RackPid = spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool),
+	RackPid = spawn_ruby_instance(Cmd),
+    io:format("Process info for ~w: ~p~n", [RackPid, process_info(RackPid)]),
 	%% Join the rack instance manager to the process group
 	case pg2:join(RequestPool, self()) of
 		{error, Error} ->
@@ -56,7 +73,7 @@ init_instance_manager(AppRoot, RailsEnv, Cmd, RequestPool, WaitThreshold) ->
 	%% Begin instance manager loop
 	instance_manager_loop(RackPid, {idle, []}, WaitThreshold).
 	
-spawn_ruby_instance(AppRoot, RailsEnv, Cmd, RequestPool) ->
+spawn_ruby_instance(Cmd) ->
     spawn(fun() ->
       process_flag(trap_exit, true),
       Port = open_port({spawn, Cmd}, [{packet, 4}, nouse_stdio, exit_status, binary]),
@@ -114,7 +131,7 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
 	receive
 		{Requester, {request, Req}} -> 
 			instance_manager_loop(RackPid, {busy, [{Requester, {request, Req}} | QueuedRequests]}, WaitThreshold);
-		{RackPid, Requester, Result} -> 
+		{RackPid, _Requester, _Result} -> 
             %% Begin processing the next request if there
             %% are any queued. Reverse the list of queued
             %% requests because new requests are added to
@@ -141,7 +158,7 @@ instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
 			Requester ! {self(), Result},
             instance_manager_loop(RackPid, {busy, []}, WaitThreshold)
     end;
-instance_manager_loop(RackPid, {clogged, [TimerRef | QueuedRequests]}, WaitThreshold) ->
+instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold) ->
     %% Send all requests queued in RequestList to be handled
     %% by the backup request pool of ruby instances.
     [pg2:get_closest_pid(backup_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
@@ -189,7 +206,7 @@ port_loop(Port, Timeout, Command) ->
       io:format("host~n"),
       Source ! {Port, node()},
       port_loop(Port,Timeout,Command);
-    {Source, heat} -> 
+    {_Source, heat} -> 
       io:format("heat~n"),
       port_command(Port, term_to_binary(ping)),
       Hot = term_to_binary(pong),
