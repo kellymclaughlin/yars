@@ -11,39 +11,25 @@ out(Arg, GC, SC) -> out404(Arg, GC, SC).
 
 out404(Arg, GC, SC) ->
     %% Process request
-	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2:get_closest_pid(normal_pool), Arg, GC, SC]),
+	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2:get_closest_pid(request_pool), Arg, GC, SC]),
 	io:format("Processed request in ~w seconds~n", [RequestTime/1000000]),
 	Result.
 
 start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
-    BackupRequestPoolSize = list_to_integer(proplists:get_value("backup_request_pool_size", SConf#sconf.opaque, 10)),
-    RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
-    WaitThreshold = list_to_integer(proplists:get_value("request_wait_threshold", SConf#sconf.opaque, "2000")),
-    io:format("Wait time: ~w~n", [WaitThreshold]),
 
-    %%Get the rack application location
-    AppRoot = case lists:reverse(SConf#sconf.docroot) of
-        "cilbup/" ++ Rest ->
-            lists:reverse(Rest);
-        _ ->
-            SConf#sconf.docroot
-    end,
+	%% Create a process group for the request pool
+	pg2:create(request_pool),
 
-	%% Create a process group for the normal request pool
-	pg2:create(normal_pool),
-	%% Create a process group for the backup request pool
-	pg2:create(backup_pool),
-
-    %%Start rack application instances for the normal request pool 
-    Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, init_instance_manager, [Cmd, normal_pool, WaitThreshold]) || _ <- lists:seq(1, RequestPoolSize)],
-    %%Start rack application instances for the backup request pool 
-	[spawn(?MODULE, init_instance_manager, [Cmd, backup_pool, WaitThreshold]) || _ <- lists:seq(1, BackupRequestPoolSize)],
+    %% Spawn process to add instance managers for ruby instances
+    spawn(?MODULE, add_instance_managers, [RequestPoolSize, SConf]),
     ok.
 
-add_instance_managers(Count, RequestPool) ->
+add_instance_managers(Count) ->
     {ok, _, SConf} = yaws_api:getconf(),
+    add_instance_managers(Count, SConf).
+
+add_instance_managers(Count, SConf) ->
     RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
     WaitThreshold = list_to_integer(proplists:get_value("request_wait_threshold", SConf#sconf.opaque, "2000")),
 
@@ -56,14 +42,14 @@ add_instance_managers(Count, RequestPool) ->
     end,
     
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, init_instance_manager, [Cmd, RequestPool, WaitThreshold]) || _ <- lists:seq(1, Count)].
+	[spawn(?MODULE, init_instance_manager, [Cmd, WaitThreshold]) || _ <- lists:seq(1, Count)].
 
-init_instance_manager(Cmd, RequestPool, WaitThreshold) ->
+init_instance_manager(Cmd, WaitThreshold) ->
 	%% Spawn a process to run the rack instance
 	RackPid = spawn_ruby_instance(Cmd),
     io:format("Process info for ~w: ~p~n", [RackPid, process_info(RackPid)]),
 	%% Join the rack instance manager to the process group
-	case pg2:join(RequestPool, self()) of
+	case pg2:join(request_pool, self()) of
 		{error, Error} ->
 			io:format("Error occurred trying to join process group: ~p~n", [Error]);
 		_ ->
@@ -150,7 +136,7 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
 instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
     receive
 		{Requester, {request, Req}} -> 
-            pg2:get_closest_pid(backup_pool) ! {Requester, {request, Req}},
+            pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
@@ -161,11 +147,11 @@ instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
 instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold) ->
     %% Send all requests queued in RequestList to be handled
     %% by the backup request pool of ruby instances.
-    [pg2:get_closest_pid(backup_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
+    [pg2:get_closest_pid(request_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
 
     receive
 		{Requester, {request, Req}} -> 
-            pg2:get_closest_pid(backup_pool) ! {Requester, {request, Req}},
+            pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
@@ -265,7 +251,7 @@ port_loop(Port, Timeout, Command) ->
 
 yaws_process_request({no_process, _}, _Arg, _GC, _SC) ->
 	%% Process has gone away so try to another one
-	yaws_process_request(pg2:get_closest_pid(normal_pool), _Arg, _GC, _SC);
+	yaws_process_request(pg2:get_closest_pid(request_pool), _Arg, _GC, _SC);
 yaws_process_request({no_such_group, _}, _Arg, _GC, _SC) ->
   [{status, 503}, {html, "There are no rack instances available to process your request."}];
 yaws_process_request(RackInstance, Arg, _GC, SC) ->
