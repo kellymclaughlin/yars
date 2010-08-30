@@ -23,8 +23,30 @@ start(SConf) ->
 
     %% Spawn process to add instance managers for ruby instances
     spawn(?MODULE, add_instance_managers, [RequestPoolSize, SConf]),
+
+    %% Spawn process to periodically check for changes 
+    %% to relevant data in the server configuration.
+    spawn(?MODULE, update_configuration, [RequestPoolSize]),
     ok.
 
+update_configuration(RequestPoolSize) ->
+    {ok, _, SConf} = yaws_api:getconf(),
+    NewRequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
+    case RequestPoolSize = NewRequestPoolSize of
+        false ->
+            case RequestPoolSize < NewRequestPoolSize of
+                true ->
+                    %% Start (NewRequestPoolSize-RequestPoolSize) new instance managers
+                    add_instance_managers(NewRequestPoolSize-RequestPoolSize);
+                false ->
+                    %% Stop (RequestPoolSize-NewRequestPoolSize) instance managers
+                    stop_instance_managers(RequestPoolSize-NewRequestPoolSize)
+            end,
+            update_configuration(NewRequestPoolSize);
+        _ ->
+            update_configuration(RequestPoolSize)
+    end.
+    
 add_instance_managers(Count) ->
     {ok, _, SConf} = yaws_api:getconf(),
     add_instance_managers(Count, SConf).
@@ -47,7 +69,6 @@ add_instance_managers(Count, SConf) ->
 init_instance_manager(Cmd, WaitThreshold) ->
 	%% Spawn a process to run the rack instance
 	RackPid = spawn_ruby_instance(Cmd),
-    io:format("Process info for ~w: ~p~n", [RackPid, process_info(RackPid)]),
 	%% Join the rack instance manager to the process group
 	case pg2:join(request_pool, self()) of
 		{error, Error} ->
@@ -66,6 +87,9 @@ spawn_ruby_instance(Cmd) ->
       port_loop(Port, 10000, "cmd")
     end).
 
+stop_instance_managers(Count) ->
+    %% TODO: Send terminate message to Count instance managers
+    [pg2:get_closest_pid(request_pool) ! {self(), terminate} || _ <- lists:seq(1, Count)]. 
 
 %% Instance manager may be in one of three states: idle, busy, or clogged.
 %%   idle - the instance manager is not managing any requests
