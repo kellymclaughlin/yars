@@ -14,7 +14,7 @@ def log(msg)
   $logger << msg + "\n"
 end
 
-module Yeref
+module Yars
   class RequestHandler 
       def initialize(app, logfile)
         @app = app
@@ -102,7 +102,7 @@ module Yeref
             html << part
           end
     
-          headers['Server'] = 'YAWS + yeref 0.0.1'
+          headers['Server'] = 'YARS 0.0.1'
           headers['Connection'] = 'close'
     
           cookies = headers.delete('cookie')

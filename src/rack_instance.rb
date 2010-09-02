@@ -35,7 +35,7 @@ puts "Rails env " + @options[:rails_env] + "\n"
 
 # Load adapter for Rack application. 
 app = load_adapter
-logfile = @options[:rails_root] + "/log/yeref.#{Process.pid}.log"
+logfile = @options[:rails_root] + "/log/yars.#{Process.pid}.log"
 
 at_exit do
   RequestDispatcher.start(app, logfile)

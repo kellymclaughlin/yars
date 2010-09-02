@@ -1,4 +1,4 @@
--module(yeref).
+-module(yars).
 
 %-export([]).
 -compile([export_all]).

@@ -1,7 +1,7 @@
-Yeref
+Yars
 ============
 
-http://github.com/mclaughlin77/yeref
+http://github.com/mclaughlin77/yars
 
 By Kelly McLaughlin
 
@@ -11,10 +11,10 @@ Hat Tip: Fuzed authors Dave Fayram, Tom Preston-Werner, and Abhay Kumar
 Description
 -----------
 
-Yeref provides a means to use the high performance Erlang webserver 
+Yars provides a means to use the high performance Erlang webserver 
 [Yaws] [] to serve rack applications in the same 
 vein as Phusion Passenger. The main goals of this project are 
-performance and simplicity. Yeref strives to be simple 
+performance and simplicity. Yars strives to be simple 
 to install, configure, and use so developers can spend more time
 writing applications. 
 
@@ -30,23 +30,23 @@ Dependencies
 Install
 -------
 
-Clone the yeref repo.
+Clone the yars repo.
 
-    git clone http://github.com/mclaughlin77/yeref.git
+    git clone http://github.com/mclaughlin77/yars.git
 
 The master branch will always track the latest release.
 
-Next, enter the yeref directory and run make to build the 
+Next, enter the yars directory and run make to build the 
 erlang project files. 
 
 Finally add any gems your rack-based project requires to 
 the Gemfile and run:
     bundle install
 
-This will install all the gems needed by yeref and your 
-project into the yeref gemset.
+This will install all the gems needed by yars and your 
+project into the yars gemset.
 
-That's it. Yeref should be ready to configure and run. 
+That's it. Yars should be ready to configure and run. 
 
 Configuration
 ---------
@@ -60,7 +60,7 @@ I'll only cover a few here.
   domain name for the application.
 - *docroot* - Change docroot to point to the public directory of
   your project.
-- *request_pool_size* - This is the number of ruby workers that yeref will start and use to fulfill requests.
+- *request_pool_size* - This is the number of ruby workers that yars will start and use to fulfill requests.
 - *request_wait_threshold* - The amount of time in milliseconds that pending requests for a particular ruby instance will wait for it to finish its current processing task before being distributed to another member of the request pool. 
                            
 Copyright

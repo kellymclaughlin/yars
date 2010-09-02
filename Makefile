@@ -38,21 +38,21 @@ clean:
 	rm -f ./*.dump
 
 boot:
-	erl -pa ./ebin/ -noshell -run systools make_script yeref-$(VERSION) -run init stop
+	erl -pa ./ebin/ -noshell -run systools make_script yars-$(VERSION) -run init stop
 
 package: all
-	cp yeref.rel yeref-$(VERSION).rel
-	mkdir yeref-$(VERSION)
-	cp -rf src yeref-$(VERSION)
-	cp -rf ebin yeref-$(VERSION)
-	cp -rf include src yeref-$(VERSION)
-	cp -rf priv src yeref-$(VERSION)
-	cp -rf Makefile yeref-$(VERSION)
-	cp -rf yeref-$(VERSION).rel yeref-$(VERSION)
-	cp -rf ktuo*.tar.gz yeref-$(VERSION)
-	cp -rf rotating_logger*.tar.gz yeref-$(VERSION)
-	cp -rf emongo*.tar.gz yeref-$(VERSION)
-	tar czf yeref-$(VERSION).tar.gz yeref-$(VERSION)
-	mv yeref-$(VERSION).tar.gz ../
-	rm -rf yeref-$(VERSION)
-	rm yeref-$(VERSION).rel
+	cp yars.rel yars-$(VERSION).rel
+	mkdir yars-$(VERSION)
+	cp -rf src yars-$(VERSION)
+	cp -rf ebin yars-$(VERSION)
+	cp -rf include src yars-$(VERSION)
+	cp -rf priv src yars-$(VERSION)
+	cp -rf Makefile yars-$(VERSION)
+	cp -rf yars-$(VERSION).rel yars-$(VERSION)
+	cp -rf ktuo*.tar.gz yars-$(VERSION)
+	cp -rf rotating_logger*.tar.gz yars-$(VERSION)
+	cp -rf emongo*.tar.gz yars-$(VERSION)
+	tar czf yars-$(VERSION).tar.gz yars-$(VERSION)
+	mv yars-$(VERSION).tar.gz ../
+	rm -rf yars-$(VERSION)
+	rm yars-$(VERSION).rel

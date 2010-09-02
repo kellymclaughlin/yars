@@ -9,7 +9,7 @@ class RequestDispatcher
   self.exit_after_current_dispatch = false
 
   def initialize(app, logfile)
-    @handler = Yeref::RequestHandler.new(app, logfile)
+    @handler = Yars::RequestHandler.new(app, logfile)
   end
 
   # Define a handler method
