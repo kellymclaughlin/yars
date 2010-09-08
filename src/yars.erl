@@ -30,7 +30,8 @@ start(SConf) ->
     ok.
 
 update_configuration(RequestPoolSize) ->
-    {ok, _, SConf} = yaws_api:getconf(),
+    timer:sleep(timer:seconds(10)),
+    {ok, _, [[SConf]]} = yaws_api:getconf(),
     NewRequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
     case RequestPoolSize = NewRequestPoolSize of
         false ->
