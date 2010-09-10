@@ -89,8 +89,15 @@ spawn_ruby_instance(Cmd) ->
     end).
 
 stop_instance_managers(Count) ->
-    %% TODO: Send terminate message to Count instance managers
-    [pg2:get_closest_pid(request_pool) ! {self(), terminate} || _ <- lists:seq(1, Count)]. 
+    %% Terminate message to Count instance managers
+    TerminateFunc = fun() -> 
+        %% Get a pid and send a terminate request to it
+        Pid = pg2:get_closest_pid(request_pool),
+        Pid ! terminate,
+        %% Remove this instance manager from the pool
+        pg2:leave(request_pool, Pid)
+    end,
+    [TerminateFunc || _ <- lists:seq(1, Count)]. 
 
 %% Instance manager may be in one of three states: idle, busy, or clogged.
 %%   idle - the instance manager is not managing any requests
@@ -98,13 +105,15 @@ stop_instance_managers(Count) ->
 %%   clogged - the current request being processed by the instance manager
 %%             has taken longer than a pre-configured wait threshold. This
 %%             value is set in the yaws configuration file.
-%% TODO: Use gen_fsm to model instance_manager behavior
+%% TODO: Maybe use gen_fsm to model instance_manager behavior
 instance_manager_loop(RackPid, {idle, []}, WaitThreshold) ->
 	receive
         {Requester, {request, Req}} -> 
 			RackPid ! {self(), Requester, {request, Req}},
             {ok, TimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
 			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}]}, WaitThreshold);
+        terminate -> 
+			RackPid ! {self(), terminate};
         _ ->
 			instance_manager_loop(RackPid, {idle, []}, WaitThreshold)
             
@@ -135,6 +144,8 @@ instance_manager_loop(RackPid, {busy, [{timer, TimerRef} | QueuedRequests]}, Wai
                     {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
 			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold)
             end;
+        terminate ->
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, terminate | QueuedRequests]}, WaitThreshold);
         threshold_elapsed ->
 			instance_manager_loop(RackPid, {clogged, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold)
 	end;
@@ -153,8 +164,20 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
                 [{NextRequester, {request, NextRequest}} | OtherRequests] ->
                     RackPid ! {self(), NextRequester, {request, NextRequest}},
                     {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
-			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold)
+			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold);
+                [terminate] ->
+                    done;
+                [terminate | _OtherRequests] ->
+                    %% This is the case where a request for this 
+                    %% instance manager was received after the terminate
+                    %% request. This should happen very infrequently and 
+                    %% for simplicity we'll reverse the lis of queued
+                    %% requests and process the most recent requests first
+                    %% and finally get back to the terminate message.
+			        instance_manager_loop(RackPid, {busy, lists:reverse(QueuedRequests)}, WaitThreshold)
             end;
+		terminate -> 
+			instance_manager_loop(RackPid, {busy, [terminate | QueuedRequests]}, WaitThreshold);
         threshold_elapsed ->
 			instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold)
 	end;
@@ -167,7 +190,10 @@ instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
             %% Received response from current request.
             %% Notify the requesting process
 			Requester ! {self(), Result},
-            instance_manager_loop(RackPid, {busy, []}, WaitThreshold)
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold);
+		terminate -> 
+            pg2:get_closest_pid(request_pool) ! terminate,
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold)
     end;
 instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold) ->
     %% Send all requests queued in RequestList to be handled
@@ -182,7 +208,10 @@ instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThre
             %% Received response from current request.
             %% Notify the requesting process
 			Requester ! {self(), Result},
-            instance_manager_loop(RackPid, {busy, []}, WaitThreshold)
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold);
+		terminate -> 
+            pg2:get_closest_pid(request_pool) ! terminate,
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold)
     end.
 
 port_loop(Port, Timeout, Command) ->
@@ -209,10 +238,10 @@ port_loop(Port, Timeout, Command) ->
         exit(timed_out)
       end,
       port_loop(Port, Timeout, Command);
-    shutdown ->
-      io:format("shutdown~n"),
+    terminate ->
+      io:format("terminate~n"),
       port_close(Port),
-      exit(shutdown);
+      exit(terminate);
     {Source, host} -> 
       io:format("host~n"),
       Source ! {Port, node()},
