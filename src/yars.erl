@@ -217,8 +217,6 @@ instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThre
 port_loop(Port, Timeout, Command) ->
   receive
     {Source, Requester, {request, Req}} -> 
-	  %{http_request, Method, {abs_path, Path}, Version} = Arg#arg.req, 
-      %Req = [{method, Method}, {path, list_to_binary(Path)}],
       port_command(Port, term_to_binary({request, Req})),
       receive
         {Port, {data, Result}} ->
@@ -232,9 +230,9 @@ port_loop(Port, Timeout, Command) ->
               Source ! {self(), Requester, Z}
           end
       after Timeout ->
-        error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Req]),
-        % We timed out, which means we need to close and then restart the port
-        port_close(Port), % Should SIGPIPE the child.
+        error_logger:error_msg("Port ~p timed out while procesing a request (~p)!~n", [self(),Req]),
+        % Timed out so close and then restart the port
+        port_close(Port),
         exit(timed_out)
       end,
       port_loop(Port, Timeout, Command);
@@ -242,53 +240,6 @@ port_loop(Port, Timeout, Command) ->
       io:format("terminate~n"),
       port_close(Port),
       exit(terminate);
-    {Source, host} -> 
-      io:format("host~n"),
-      Source ! {Port, node()},
-      port_loop(Port,Timeout,Command);
-    {_Source, heat} -> 
-      io:format("heat~n"),
-      port_command(Port, term_to_binary(ping)),
-      Hot = term_to_binary(pong),
-      receive
-        {Port, {data, Hot}} -> 
-            io:format("Hot!~n");   
-            %Source ! {self(), hot};
-        Other ->
-            io:format("Other: ~p~n", [Other])    
-      end,
-      io:format("calling port_loop again~n"),
-      port_loop(Port, Timeout, Command);
-    {Source, api} -> 
-      io:format("api~n"),
-      Port ! {self(), {command, term_to_binary(api)}},
-      receive
-        {Port, {data, Result}} ->   
-          {result, Api} = binary_to_term(Result),
-          Source ! {self(), tuple_to_list(Api)}
-      end,
-      port_loop(Port,Timeout,Command);
-    {Source, {command, Message}} -> 
-      io:format("command~n"),
-      Port ! {self(), {command, Message}},
-      receive
-        {Port, {data, Result}} ->
-          DB = binary_to_term(Result),
-          case DB of
-            {last_result, X} ->
-              Source ! {self(), {result, X}},
-              port_close(Port),
-              exit(last_result);
-            Z -> 
-              Source ! {self(), Z}
-          end
-      after Timeout ->
-        error_logger:error_msg("Port Wrapper ~p timed out in mid operation (~p)!~n", [self(),Message]),
-        % We timed out, which means we need to close and then restart the port
-        port_close(Port), % Should SIGPIPE the child.
-        exit(timed_out)
-      end,
-      port_loop(Port,Timeout,Command);
     {Port, {exit_status, Code}} ->
       io:format("exit status ~p~n",[Code]),
       % Hard and Unanticipated Crash
@@ -299,7 +250,7 @@ port_loop(Port, Timeout, Command) ->
       port_close(Port),
       exit(shutdown);
     Any -> 
-      error_logger:warning_msg("PortWrapper ~p got unexpected message: ~p~n", [self(), Any]),
+      error_logger:warning_msg("Port ~p got unexpected message: ~p~n", [self(), Any]),
       port_loop(Port, Timeout, Command)
   end.
 
@@ -391,7 +342,7 @@ determine_ssl(SC) ->
   end.
   
 execute_request(InstanceManager, Parameters) ->
-  Request = [http_request , pure | prepare_parameters(Parameters)],
+  Request = prepare_parameters(Parameters),
   InstanceManager ! {self(), {request, Request}},
   receive
     {_, {result, Result}} -> result_processor(Result);
@@ -412,11 +363,10 @@ prep_authorization({_User, _Pass, Auth}) ->
 prep_authorization(Any) ->
   Any.
 
-details() ->
-  {ok, Details} = application:get_env(fuzed_frontend, details),
-  Details.
-
-prep(A) when is_list(A) -> list_to_binary(A);
+prep(undefined) ->
+    undefined;
+prep(A) when is_list(A) -> 
+    list_to_binary(A);
 prep(A) -> A.
 
 prepare_parameters(L) when is_list(L) ->

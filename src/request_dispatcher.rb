@@ -2,7 +2,7 @@ require File.dirname(__FILE__) + '/request_handler.rb'
 
 class RequestDispatcher
   class << self
-    attr_accessor :handler, :signatures, :node_kind, :pkgs, :tags, :roles, :extra_config, :exception_handler, :exit_after_current_dispatch
+    attr_accessor :handler, :exception_handler, :exit_after_current_dispatch
   end
 
   self.exception_handler = nil
@@ -12,52 +12,15 @@ class RequestDispatcher
     @handler = Yars::RequestHandler.new(app, logfile)
   end
 
-  # Define a handler method
-  #   +method+ is the Symbol method name
-  #   +names+ is a list of required parameters
-  #
-  # Returns nothing
-  def self.handle(method, *names, &block)
-    RequestDispatcher.signatures[method] = names.sort { |a, b| a.to_s <=> b.to_s }
-
-    define_method("handle_proxy_#{method}", &block)
-
-    define_method("handle_#{method}".to_sym) do |iargs|
-      args = convert_args(iargs)
-      self.verify_args(method, args)
-
-      self.send("handle_proxy_#{method}", args)
-    end
-  end
-
   def self.start(app, logfile)
 	RequestDispatcher.new(app, logfile).start
   end
 
-  #def handle(:handle_request, :request) do |args|
-    #$handler.service(args[:request])
-  #end
-
-    # Dispatch a method by its name
-  #   +method+ is the Symbol representing the method name
-  #   +retype+ is the response type Symbol (:json | :pure)
-  #   +args+ is the Erlang-style args for the call
-  #
-  # Returns one of:
-  #   [:result, <jsonified result>]
-  #   [:error, <error string>]
-  def dispatch(method, retype, args)
-    #result = self.send("handle_#{method}".to_sym, args)
+  # Dispatch a request to be handled by the handler module
+  def dispatch(args)
     result = @handler.service(convert_args(args))
     result_key = RequestDispatcher.exit_after_current_dispatch ? :last_result : :result
-    case retype
-      when :json
-        [result_key, [:raw, result.to_json]]
-      when :pure
-        [result_key, result]
-      else
-        raise "Unknown response type: #{retype}"
-    end
+    [result_key, result]
   rescue Exception => e
     if e.instance_of?(SystemExit)
       exit
@@ -72,17 +35,11 @@ class RequestDispatcher
     end
   end
 
-
-  # Start the Erlectricity recieve/respond loop
-  #
-  # Never returns
+  # Erlectricity recieve/respond loop
   def start
     receive(IO.new(3), IO.new(4)) do |f|
       f.when([:request, Array]) do |args|
-        method = args[0]
-		return_type = args[1]
-        args = args[2..-1]
-        f.send! dispatch(method, return_type, args)
+        f.send! dispatch(args)
         exit if RequestDispatcher.exit_after_current_dispatch
         f.receive_loop
       end

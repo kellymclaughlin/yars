@@ -1,32 +1,18 @@
 require 'rubygems'
-require'bundler'
-Bundler.setup
-require 'erlectricity'
-
 require 'stringio'
 require 'logger'
 require 'rack'
-
-$total_avg = [0, 0]
-$rails_avg = [0, 0]
-
-def log(msg)
-  $logger << msg + "\n"
-end
 
 module Yars
   class RequestHandler 
       def initialize(app, logfile)
         @app = app
-        #$logger = Logger.new(logfile) if LOG
       end
       
       def service(req)
-        #log('------------RAW IN------------') if LOG
-        #log(request.inspect) if LOG
-        request = req['request'] 
+        request = req[:request] 
         method = request['method']
-        version = request['http_version'] # => e.g. [1, 1]
+        version = request['http_version']
         remote_addr = request['remote_addr']
         path = request['querypath']
         query = request['querydata'] == :undefined ? '' : request['querydata']
@@ -84,19 +70,9 @@ module Yars
           env["HTTP_COOKIE"] = cookie.to_s
         end
   
-        #log('------------IN------------') if LOG
-        #log(env.inspect) if LOG
-  
         begin
-          t1 = Time.now
-    
           status, headers, body = @app.call(env)
     
-          rails_delta = Time.now - t1
-          $rails_avg[0] += rails_delta
-          $rails_avg[1] += 1
-          #log(">> Rails in #{rails_delta} (#{$rails_avg[0] / $rails_avg[1]} avg) sec") if LOG
-  
           html = ''
           body.each do |part|
             html << part
@@ -111,25 +87,18 @@ module Yars
           status = (headers["Status"].split(" ").first rescue nil) || status
           headers.delete("Status") if headers["Status"]
 
-          res = 
           [:response,
-           [[:status, status.to_i],
-            [:allheaders, headers.keys.inject([]) {|x,y| x << [:header, y, headers[y]]}],
-            [:html, html]]]
+                  [[:status, status.to_i],
+                  [:allheaders, headers.keys.inject([]) {|x,y| x << [:header, y, headers[y]]}],
+                  [:html, html]]]
         rescue => e
-          res = 
           [:response, 
-            [[:status, 500],
-             [:allheaders, [
-               [:header, "Content-Type", "text/plain; charset=utf-8"], 
-               [:header, "Cache-Control", "no-cache"]]], 
-             [:html, "500 Internal Error\n\n#{e}\n\n#{e.backtrace}"]]]
+                  [[:status, 500],
+                  [:allheaders, [
+                    [:header, "Content-Type", "text/plain; charset=utf-8"], 
+                    [:header, "Cache-Control", "no-cache"]]], 
+                  [:html, "500 Internal Error\n\n#{e}\n\n#{e.backtrace}"]]]
         end
-    
-        #log('-----------OUT------------') if LOG
-        #log(res.inspect) if LOG
-  
-        res
     end
   end
 end

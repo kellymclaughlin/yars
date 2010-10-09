@@ -9,7 +9,6 @@ require File.dirname(__FILE__) + '/request_dispatcher.rb'
 def load_adapter
   adapter = @options[:adapter] || Rack::Adapter.guess(@options[:rails_root])
   puts ">> Using #{adapter} adapter"
-  puts @options[:rails_root]
   Rack::Adapter.for(adapter, {:chdir => @options[:rails_root], :environment => @options[:rails_env]})
 rescue Rack::AdapterNotFound => e
   raise InvalidOption, e.message
@@ -29,9 +28,7 @@ opts = OptionParser.new do |opts|
 end
 opts.parse(ARGV)
 @options[:rails_root] = File.join(File.dirname(__FILE__), *%w[.. test app]) if @options[:test]
-puts "Rails root " + @options[:rails_root] if @options[:rails_root] + "\n"
 @options[:rails_env] ||= 'development'
-puts "Rails env " + @options[:rails_env] + "\n"
 
 # Load adapter for Rack application. 
 app = load_adapter
