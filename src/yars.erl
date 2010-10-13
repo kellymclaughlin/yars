@@ -55,6 +55,7 @@ add_instance_managers(Count) ->
 add_instance_managers(Count, SConf) ->
     RailsEnv = proplists:get_value("rails_env", SConf#sconf.opaque, "production"),
     WaitThreshold = list_to_integer(proplists:get_value("request_wait_threshold", SConf#sconf.opaque, "2000")),
+    MaxRequests = list_to_integer(proplists:get_value("max_requests", SConf#sconf.opaque, 100)),
 
     %%Get the rack application location
     AppRoot = case lists:reverse(SConf#sconf.docroot) of
@@ -65,9 +66,9 @@ add_instance_managers(Count, SConf) ->
     end,
     
     Cmd = lists:flatten(io_lib:format("bundle exec \"ruby ./src/rack_instance.rb -r ~s -e ~s\"", [AppRoot, RailsEnv])),
-	[spawn(?MODULE, init_instance_manager, [Cmd, WaitThreshold]) || _ <- lists:seq(1, Count)].
+	[spawn(?MODULE, init_instance_manager, [Cmd, WaitThreshold, MaxRequests]) || _ <- lists:seq(1, Count)].
 
-init_instance_manager(Cmd, WaitThreshold) ->
+init_instance_manager(Cmd, WaitThreshold, MaxRequests) ->
 	%% Spawn a process to run the rack instance
 	RackPid = spawn_ruby_instance(Cmd),
 	%% Join the rack instance manager to the process group
@@ -79,7 +80,7 @@ init_instance_manager(Cmd, WaitThreshold) ->
 	end,
 
 	%% Begin instance manager loop
-	instance_manager_loop(RackPid, {idle, []}, WaitThreshold).
+	instance_manager_loop(RackPid, {idle, []}, WaitThreshold, Cmd, {0, MaxRequests}).
 	
 spawn_ruby_instance(Cmd) ->
     spawn(fun() ->
@@ -106,24 +107,31 @@ stop_instance_managers(Count) ->
 %%             has taken longer than a pre-configured wait threshold. This
 %%             value is set in the yaws configuration file.
 %% TODO: Maybe use gen_fsm to model instance_manager behavior
-instance_manager_loop(RackPid, {idle, []}, WaitThreshold) ->
+instance_manager_loop(RackPid, State, WaitThreshold, RubyCmd, {MaxRequests, MaxRequests}) ->
+    %% The configured maximum request count has been reached
+    %% for this rack instance. Terminate the rack instance
+    %% and restart a new one.
+    RackPid ! {self(), terminate},
+	NewRackPid = spawn_ruby_instance(RubyCmd),
+    instance_manager_loop(NewRackPid, State, WaitThreshold, RubyCmd, {0, MaxRequests});
+instance_manager_loop(RackPid, {idle, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
 	receive
         {Requester, {request, Req}} -> 
 			RackPid ! {self(), Requester, {request, Req}},
             {ok, TimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
-			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}]}, WaitThreshold);
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
         terminate -> 
 			RackPid ! {self(), terminate};
         _ ->
-			instance_manager_loop(RackPid, {idle, []}, WaitThreshold)
+			instance_manager_loop(RackPid, {idle, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
             
 	end;
-instance_manager_loop(RackPid, {busy, []}, WaitThreshold) ->
-    instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
-instance_manager_loop(RackPid, {busy, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold) ->
+instance_manager_loop(RackPid, {busy, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
+    instance_manager_loop(RackPid, {idle, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
+instance_manager_loop(RackPid, {busy, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
 	receive
 		{Requester, {request, Req}} -> 
-			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, {Requester, {request, Req}} | QueuedRequests]}, WaitThreshold);
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, {Requester, {request, Req}} | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
             %% Cancel the timer for the request
@@ -138,21 +146,21 @@ instance_manager_loop(RackPid, {busy, [{timer, TimerRef} | QueuedRequests]}, Wai
             %% the front of the list.
             case lists:reverse(QueuedRequests) of
                 [] ->
-			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
+			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
                 [{NextRequester, {request, NextRequest}} | OtherRequests] ->
                     RackPid ! {self(), NextRequester, {request, NextRequest}},
                     {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
-			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold)
+			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests})
             end;
         terminate ->
-			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, terminate | QueuedRequests]}, WaitThreshold);
+			instance_manager_loop(RackPid, {busy, [{timer, TimerRef}, terminate | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
         threshold_elapsed ->
-			instance_manager_loop(RackPid, {clogged, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold)
+			instance_manager_loop(RackPid, {clogged, [{timer, TimerRef} | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
 	end;
-instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
+instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
 	receive
 		{Requester, {request, Req}} -> 
-			instance_manager_loop(RackPid, {busy, [{Requester, {request, Req}} | QueuedRequests]}, WaitThreshold);
+			instance_manager_loop(RackPid, {busy, [{Requester, {request, Req}} | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, _Requester, _Result} -> 
             %% Begin processing the next request if there
             %% are any queued. Reverse the list of queued
@@ -160,11 +168,11 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
             %% the front of the list.
             case lists:reverse(QueuedRequests) of
                 [] ->
-			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold);
+			        instance_manager_loop(RackPid, {idle, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
                 [{NextRequester, {request, NextRequest}} | OtherRequests] ->
                     RackPid ! {self(), NextRequester, {request, NextRequest}},
                     {ok, NextTimerRef} = timer:send_after(WaitThreshold, threshold_elapsed),    
-			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold);
+			        instance_manager_loop(RackPid, {busy, [{timer, NextTimerRef} | OtherRequests]}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
                 [terminate] ->
                     done;
                 [terminate | _OtherRequests] ->
@@ -174,28 +182,28 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold) ->
                     %% for simplicity we'll reverse the lis of queued
                     %% requests and process the most recent requests first
                     %% and finally get back to the terminate message.
-			        instance_manager_loop(RackPid, {busy, lists:reverse(QueuedRequests)}, WaitThreshold)
+			        instance_manager_loop(RackPid, {busy, lists:reverse(QueuedRequests)}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
             end;
 		terminate -> 
-			instance_manager_loop(RackPid, {busy, [terminate | QueuedRequests]}, WaitThreshold);
+			instance_manager_loop(RackPid, {busy, [terminate | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
         threshold_elapsed ->
-			instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold)
+			instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
 	end;
-instance_manager_loop(RackPid, {clogged, []}, WaitThreshold) ->
+instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
     receive
 		{Requester, {request, Req}} -> 
             pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
-			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
             %% Notify the requesting process
 			Requester ! {self(), Result},
-            instance_manager_loop(RackPid, {busy, []}, WaitThreshold);
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
 		terminate -> 
             pg2:get_closest_pid(request_pool) ! terminate,
-			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold)
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
     end;
-instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold) ->
+instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
     %% Send all requests queued in RequestList to be handled
     %% by the backup request pool of ruby instances.
     [pg2:get_closest_pid(request_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
@@ -203,15 +211,15 @@ instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThre
     receive
 		{Requester, {request, Req}} -> 
             pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
-			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold);
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
             %% Notify the requesting process
 			Requester ! {self(), Result},
-            instance_manager_loop(RackPid, {busy, []}, WaitThreshold);
+            instance_manager_loop(RackPid, {busy, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
 		terminate -> 
             pg2:get_closest_pid(request_pool) ! terminate,
-			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold)
+			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
     end.
 
 port_loop(Port, Timeout, Command) ->
