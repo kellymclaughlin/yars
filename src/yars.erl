@@ -11,7 +11,7 @@ out(Arg, GC, SC) -> out404(Arg, GC, SC).
 
 out404(Arg, GC, SC) ->
     %% Process request
-	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2:get_closest_pid(request_pool), Arg, GC, SC]),
+	{RequestTime, Result} = timer:tc(?MODULE, yaws_process_request, [pg2_ext:get_next_pid(request_pool), Arg, GC, SC]),
 	io:format("Processed request in ~w seconds~n", [RequestTime/1000000]),
 	Result.
 
@@ -19,7 +19,7 @@ start(SConf) ->
     RequestPoolSize = list_to_integer(proplists:get_value("request_pool_size", SConf#sconf.opaque, 10)),
 
 	%% Create a process group for the request pool
-	pg2:create(request_pool),
+	pg2_ext:create(request_pool),
 
     %% Spawn process to add instance managers for ruby instances
     spawn(?MODULE, add_instance_managers, [RequestPoolSize, SConf]),
@@ -72,7 +72,7 @@ init_instance_manager(Cmd, WaitThreshold, MaxRequests) ->
 	%% Spawn a process to run the rack instance
 	RackPid = spawn_ruby_instance(Cmd),
 	%% Join the rack instance manager to the process group
-	case pg2:join(request_pool, self()) of
+	case pg2_ext:join(request_pool, self()) of
 		{error, Error} ->
 			io:format("Error occurred trying to join process group: ~p~n", [Error]);
 		_ ->
@@ -93,10 +93,10 @@ stop_instance_managers(Count) ->
     %% Terminate message to Count instance managers
     TerminateFunc = fun() -> 
         %% Get a pid and send a terminate request to it
-        Pid = pg2:get_closest_pid(request_pool),
+        Pid = pg2_ext:get_next_pid(request_pool),
         Pid ! terminate,
         %% Remove this instance manager from the pool
-        pg2:leave(request_pool, Pid)
+        pg2_ext:leave(request_pool, Pid)
     end,
     [TerminateFunc || _ <- lists:seq(1, Count)]. 
 
@@ -192,7 +192,7 @@ instance_manager_loop(RackPid, {busy, QueuedRequests}, WaitThreshold, _RubyCmd, 
 instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
     receive
 		{Requester, {request, Req}} -> 
-            pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
+            pg2_ext:get_next_pid(request_pool) ! {Requester, {request, Req}},
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
@@ -200,17 +200,17 @@ instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestC
 			Requester ! {self(), Result},
             instance_manager_loop(RackPid, {busy, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
 		terminate -> 
-            pg2:get_closest_pid(request_pool) ! terminate,
+            pg2_ext:get_next_pid(request_pool) ! terminate,
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
     end;
 instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests}) ->
     %% Send all requests queued in RequestList to be handled
     %% by the backup request pool of ruby instances.
-    [pg2:get_closest_pid(request_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
+    [pg2_ext:get_next_pid(request_pool) ! QueuedRequestData || QueuedRequestData <- lists:reverse(QueuedRequests)],
 
     receive
 		{Requester, {request, Req}} -> 
-            pg2:get_closest_pid(request_pool) ! {Requester, {request, Req}},
+            pg2_ext:get_next_pid(request_pool) ! {Requester, {request, Req}},
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests});
 		{RackPid, Requester, Result} -> 
             %% Received response from current request.
@@ -218,7 +218,7 @@ instance_manager_loop(RackPid, {clogged, [_TimerRef | QueuedRequests]}, WaitThre
 			Requester ! {self(), Result},
             instance_manager_loop(RackPid, {busy, []}, WaitThreshold, _RubyCmd, {RequestCount+1, _MaxRequests});
 		terminate -> 
-            pg2:get_closest_pid(request_pool) ! terminate,
+            pg2_ext:get_next_pid(request_pool) ! terminate,
 			instance_manager_loop(RackPid, {clogged, []}, WaitThreshold, _RubyCmd, {RequestCount, _MaxRequests})
     end.
 
@@ -264,7 +264,7 @@ port_loop(Port, Timeout, Command) ->
 
 yaws_process_request({no_process, _}, _Arg, _GC, _SC) ->
 	%% Process has gone away so try to another one
-	yaws_process_request(pg2:get_closest_pid(request_pool), _Arg, _GC, _SC);
+	yaws_process_request(pg2_ext:get_next_pid(request_pool), _Arg, _GC, _SC);
 yaws_process_request({no_such_group, _}, _Arg, _GC, _SC) ->
   [{status, 503}, {html, "There are no rack instances available to process your request."}];
 yaws_process_request(RackInstance, Arg, _GC, SC) ->
