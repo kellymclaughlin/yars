@@ -57,6 +57,7 @@ create(Name) ->
     end.
 
 -type name() :: term().
+-type position() :: integer().
 
 -spec delete(name()) -> 'ok'.
 
@@ -124,6 +125,19 @@ get_local_members(Name) ->
             {error, {no_such_group, Name}}
     end.
 
+-type get_member_ret() :: pid() | {'error', {'no_such_group', name()}}.
+
+-spec get_member(name(), position()) -> get_member_ret().
+   
+get_member(Name, Pos) ->
+    ensure_started(),
+    case ets:member(pg2_table, {group, Name}) of
+        true ->
+            group_member(Name, Pos);
+        false ->
+            {error, {no_such_group, Name}}
+    end.
+
 -spec which_groups() -> [name()].
 
 which_groups() ->
@@ -169,11 +183,7 @@ get_next_pid(Name) ->
                 unavailable ->
                     {error, {no_process, Name}};
                 _ ->
-                    case get_members(Name) of
-                        [] -> {error, {no_process, Name}};
-                        Members ->
-                            lists:nth(NextProcessIndex, Members)
-                    end
+                    get_member(Name, NextProcessIndex)
             end
     end.
 
@@ -372,6 +382,14 @@ group_members(Name) ->
     [P || 
         [P, N] <- ets:match(pg2_table, {{member, Name, '$1'},'$2'}),
         _ <- lists:seq(1, N)].
+
+group_member(Name, Pos) ->
+    {Members, _} = ets:match(pg2_table, {{member, Name, '$1'},'$2'}, Pos),
+    Matches = [P || 
+        [P, N] <- Members,
+        _ <- lists:seq(1, N)],
+    lists:last(Matches).
+        
 
 local_group_members(Name) ->
     [P || 
