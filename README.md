@@ -5,7 +5,7 @@ http://github.com/mclaughlin77/yars
 
 By Kelly McLaughlin
 
-Hat Tip: Fuzed authors Dave Fayram, Tom Preston-Werner, and Abhay Kumar
+Tip O' The Hat: Fuzed authors Dave Fayram, Tom Preston-Werner, and Abhay Kumar
 
 
 Description
@@ -24,7 +24,7 @@ Dependencies
 * [Erlang/OTP] []
 * [Yaws] []
 * [RVM] []
-* Ruby 1.8.7 - rvm install 1.8.7
+* Ruby 
 * [Bundler] []
 
 Install
@@ -56,7 +56,7 @@ of the configuration directives are self-explanatory so
 I'll only cover a few here.
     
 - Create a server block for each application you 
-  want to server. Replace localhost with the 
+  want to serve. Replace localhost with the 
   domain name for the application.
 - *docroot* - Change docroot to point to the public directory of
   your project.
